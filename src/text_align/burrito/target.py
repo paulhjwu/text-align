@@ -1,5 +1,6 @@
 """Target/translation token data model and reader."""
 
+import csv
 from collections import UserDict, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -113,7 +114,7 @@ class TargetReader(UserDict):
         self.identifier = self.tsvpath.stem
         self.badtokens = {}
         with self.tsvpath.open("rb") as f:
-            reader = DictReader(f, delimiter="\t", quotechar="\x00")
+            reader = DictReader(f, delimiter="\t", quoting=csv.QUOTE_NONE)
             for row in reader:
                 assert idheader in row, f"TargetReader: missing ID header '{idheader}'"
                 idrow = {("id" if k == idheader else k): v for k, v in row.items()} \

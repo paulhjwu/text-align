@@ -1,5 +1,6 @@
 """Source token data model and reader."""
 
+import csv
 from collections import UserDict
 from dataclasses import dataclass
 from itertools import groupby
@@ -154,7 +155,7 @@ class SourceReader(UserDict):
         super().__init__()
         self.tsvpath = tsvpath
         with self.tsvpath.open("rb") as f:
-            reader = DictReader(f, delimiter="\t", quotechar="\x00")
+            reader = DictReader(f, delimiter="\t", quoting=csv.QUOTE_NONE)
             for row in reader:
                 assert idheader in row, f"Missing ID header '{idheader}'"
                 idrow = {("id" if k == idheader else k): v for k, v in row.items()} \

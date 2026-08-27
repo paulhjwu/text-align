@@ -64,8 +64,21 @@ min_unaligned_src: 2
 
 
 # ---------------------------------------------------------------------------
-# ACAI and trabina — paths derived automatically from git-root sibling layout
+# ACAI and trabina — paths normally derived automatically from git-root sibling
+# layout, but that convention doesn't hold on this machine (text-align isn't
+# nested two directories below a shared git root), so acai_data_dir is set
+# explicitly to a local clone placed inside this repo (gitignored).
 # ---------------------------------------------------------------------------
+
+acai_data_dir: ./BibleAquifer/ACAI
+
+# Local fhl_isa checkout — bakes Greek/Hebrew morphology into the click-popup
+# at render time instead of the popup calling bible.fhl.net live.
+# fhl_isa's better-sqlite3 native binding requires Node >=22 (this machine's
+# default `node` on PATH is v19.9.0, incompatible — see nvm use 22), so pin
+# fhl_node_bin to the nvm-installed v22 binary explicitly.
+fhl_parsing_dir: ./fhl_isa
+fhl_node_bin: /home/paulhjwu/.nvm/versions/node/v22.22.2/bin/node
 
 # ---------------------------------------------------------------------------
 # sim-migrate settings

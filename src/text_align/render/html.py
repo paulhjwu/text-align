@@ -23,6 +23,17 @@ ACAI entity tokens are highlighted.
 NEQ tokens (source or target) are rendered in grey; all other symbols use
 the default text color.
 
+Clicking a Greek/Hebrew source word (``.grk`` spans) opens a popup with its
+morphology.  When ``--fhl-parsing-dir`` points at a checkout of the
+``fhl_isa`` tool (``bibleParsingLookup.js`` + ``bible_parsing.db``), the
+popup is filled in at render time from that local, offline database
+(part of speech, tense/voice/mood, case/number/gender, gloss, lemma) —
+looked up by word text via ``fhl_isa/lookup_cli.js``, one batched Node
+subprocess call per corpus.  Words with no local match, or when
+``--fhl-parsing-dir`` is omitted, fall back to the popup's original
+behavior: a live fetch of the Strong's-number dictionary entry from
+bible.fhl.net.
+
 CLI entry point: ``render-alignment``
 """
 
@@ -32,6 +43,7 @@ import argparse
 import datetime
 import json
 import os
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -74,7 +86,152 @@ body  { font-family: serif; font-size: 14px; }
              margin: 2px 0 14px 0; letter-spacing: 0.01em; }
 .file-meta .meta-edition { font-weight: bold; color: #333; }
 .file-meta .meta-sep { color: #bbb; margin: 0 7px; }
+
+.grk  { cursor: pointer; border-bottom: 1px dotted #77a; }
+.grk:hover { background: #eef4ff; }
+#strongs-popup { position: absolute; max-width: 360px; max-height: 320px; overflow: auto;
+    background: #fff; border: 1px solid #99a; border-radius: 4px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.25); padding: 8px 10px 8px 10px;
+    font-family: Arial, sans-serif; font-size: 12px; line-height: 1.4;
+    text-align: left; z-index: 1000; }
+#strongs-popup-close { position: absolute; top: 2px; right: 6px; cursor: pointer;
+    color: #888; font-weight: bold; padding: 0 4px; }
+.strongs-rec { margin-bottom: 6px; padding-bottom: 6px; border-bottom: 1px solid #eee; }
+.strongs-rec:last-child { margin-bottom: 0; padding-bottom: 0; border-bottom: none; }
+.strongs-row { margin: 1px 0; }
+.strongs-label { font-weight: bold; color: #446; }
 </style>
+"""
+
+# ---------------------------------------------------------------------------
+# Strong's-definition popup (fhl.net) — click a Greek/Hebrew source word to
+# fetch and display its Strong's-number definition inline.
+# ---------------------------------------------------------------------------
+
+_JS = """\
+<script>
+window.addEventListener('DOMContentLoaded', function () {
+  // FHL's own testament flag is the opposite of what "isGreek" would suggest:
+  // N=0 is the NT/Greek dictionary, N=1 is the OT/Hebrew dictionary.
+  async function getStrongsDefinition(sn, N) {
+    const url = `https://bible.fhl.net/json/sd.php?N=${N}&k=${sn}`;
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+    return await response.json();
+  }
+
+  function parseStrongsCode(code) {
+    const m = /^([GH])0*(\\d+)([a-d])?$/.exec(code || '');
+    if (!m) return null;
+    return { N: m[1] === 'G' ? 0 : 1, k: m[2] + (m[3] || '') };
+  }
+
+  function renderParsing(container, parsed) {
+    container.innerHTML = '';
+    const block = document.createElement('div');
+    block.className = 'strongs-rec';
+    const rows = [
+      ["Strong's", parsed.strongNumber],
+      ['Part of speech', parsed.partOfSpeech],
+      ['Form', [parsed.line1, parsed.line2].filter(Boolean).join(', ')],
+      ['Lemma', parsed.lemma],
+      ['Gloss', parsed.gloss],
+    ];
+    for (const [label, value] of rows) {
+      if (!value) continue;
+      const row = document.createElement('div');
+      row.className = 'strongs-row';
+      const lab = document.createElement('span');
+      lab.className = 'strongs-label';
+      lab.textContent = label + ': ';
+      row.appendChild(lab);
+      const val = document.createElement('span');
+      val.textContent = value;
+      row.appendChild(val);
+      block.appendChild(row);
+    }
+    container.appendChild(block);
+  }
+
+  function renderDefinition(container, data) {
+    container.innerHTML = '';
+    const records = Array.isArray(data)
+      ? data
+      : (data && Array.isArray(data.record) ? data.record : (data ? [data] : []));
+    if (!records.length) {
+      container.textContent = 'No definition found.';
+      return;
+    }
+    for (const rec of records) {
+      const block = document.createElement('div');
+      block.className = 'strongs-rec';
+      for (const [key, value] of Object.entries(rec)) {
+        if (value === null || value === undefined || value === '') continue;
+        const row = document.createElement('div');
+        row.className = 'strongs-row';
+        const label = document.createElement('span');
+        label.className = 'strongs-label';
+        label.textContent = key + ': ';
+        row.appendChild(label);
+        const val = document.createElement('span');
+        val.innerHTML = String(value);
+        row.appendChild(val);
+        block.appendChild(row);
+      }
+      container.appendChild(block);
+    }
+  }
+
+  const popup = document.createElement('div');
+  popup.id = 'strongs-popup';
+  popup.style.display = 'none';
+  popup.innerHTML = "<span id='strongs-popup-close'>&times;</span><div id='strongs-popup-body'></div>";
+  document.body.appendChild(popup);
+  const closeBtn = popup.querySelector('#strongs-popup-close');
+  const body = popup.querySelector('#strongs-popup-body');
+  closeBtn.addEventListener('click', function () { popup.style.display = 'none'; });
+  document.addEventListener('click', function (e) {
+    if (popup.style.display !== 'none' && !popup.contains(e.target) && !e.target.classList.contains('grk')) {
+      popup.style.display = 'none';
+    }
+  });
+
+  document.addEventListener('click', async function (e) {
+    const el = e.target.closest('.grk');
+    if (!el) return;
+    e.stopPropagation();
+    const rect = el.getBoundingClientRect();
+    popup.style.left = (window.scrollX + rect.left) + 'px';
+    popup.style.top = (window.scrollY + rect.bottom + 4) + 'px';
+    popup.style.display = 'block';
+
+    // Local morphology, baked in at render time by --fhl-parsing-dir, takes
+    // priority over the live fhl.net fetch — no network round-trip needed.
+    if (el.dataset.fhl) {
+      try {
+        renderParsing(body, JSON.parse(el.dataset.fhl));
+      } catch (err) {
+        body.textContent = `Failed to parse local morphology data: ${err.message}`;
+      }
+      return;
+    }
+
+    const code = el.dataset.strongs;
+    const parsed = parseStrongsCode(code);
+    if (!parsed) {
+      body.textContent = "No morphology or Strong's data available for this word.";
+      return;
+    }
+    body.textContent = `Loading ${code} ...`;
+    try {
+      const data = await getStrongsDefinition(parsed.k, parsed.N);
+      renderDefinition(body, data);
+    } catch (err) {
+      body.textContent = `Failed to fetch definition for ${code}: ${err.message}`;
+    }
+  });
+});
+</script>
 """
 
 
@@ -88,6 +245,7 @@ class AlignmentToken:
 
     targets: dict[str, str]                              # tid → text
     sources: dict[str, str]                              # sid → text
+    source_strongs: dict[str, str] = field(default_factory=dict)  # sid → Strong's code
     primary_targets: frozenset[str] = field(default_factory=frozenset)
     secondary_targets: frozenset[str] = field(default_factory=frozenset)
     separated_targets: frozenset[str] = field(default_factory=frozenset)
@@ -112,6 +270,12 @@ def get_alignment_sources(source_selectors: list[str], sources: list) -> dict[st
     return {sel: get_source_text(sel, sources) for sel in sorted(source_selectors)}
 
 
+def get_alignment_source_strongs(source_selectors: list[str], sources: list) -> dict[str, str]:
+    """Return sid → Strong's code for each source selector that has one."""
+    strong_by_id = {src.id: src.strong for src in sources if src.strong}
+    return {sel: strong_by_id[sel] for sel in source_selectors if sel in strong_by_id}
+
+
 def get_alignment_targets(target_selectors: list[str], targets: list) -> dict[str, str]:
     return {t.id: t.text for t in targets if t.id in target_selectors}
 
@@ -123,6 +287,50 @@ def get_sources_with_targets(records: dict) -> dict[str, list[str]]:
             for source_id in alignment.source_selectors:
                 result[source_id] = alignment.target_selectors
     return result
+
+
+def _load_fhl_parsing(
+    words: set[str], fhl_dir: Path, node_bin: str = "node"
+) -> dict[str, dict]:
+    """Batch-lookup Greek/Hebrew morphology for `words` via fhl_isa's
+    bibleParsingLookup.js (local bible_parsing.db, no network access).
+
+    Runs `fhl_dir/lookup_cli.js` once for the whole word set: each word is
+    matched by text (accent/niqqud-insensitive, per bibleParsingLookup.js's
+    `getParsingInfo`), and the decoded form with the most matching
+    occurrences is kept — a word can have multiple homonym occurrences
+    across the whole Bible with different parsing, and this isn't tied to
+    the specific verse being rendered (bible_parsing.db keys rows by a text
+    book abbreviation, not the BCVWPID scheme used elsewhere in this file).
+
+    Returns word -> decoded parsing dict; words with no local match are
+    omitted.  Returns {} (after printing a warning) if Node, the script, or
+    the database is unavailable, so rendering proceeds without local
+    morphology and each `.grk` span falls back to its Strong's-code popup.
+    """
+    if not words:
+        return {}
+    script = (fhl_dir / "lookup_cli.js").resolve()
+    try:
+        proc = subprocess.run(
+            [node_bin, str(script)],
+            input=json.dumps(sorted(words)),
+            cwd=fhl_dir,
+            capture_output=True,
+            text=True,
+            timeout=300,
+            check=True,
+        )
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        detail = exc.stderr if isinstance(exc, subprocess.CalledProcessError) and exc.stderr else exc
+        print(f"  fhl_isa parsing lookup failed ({detail}); continuing without local morphology")
+        return {}
+    try:
+        raw = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        print(f"  fhl_isa parsing lookup returned invalid JSON ({exc}); continuing without local morphology")
+        return {}
+    return {word: info for word, info in raw.items() if info}
 
 
 def get_unused_verse_sources(
@@ -166,6 +374,36 @@ def _source_index(src_id: str, target_id: str) -> str:
             return f"{int(src_bcv.chapter_ID)}:{int(src_bcv.verse_ID)}.{w}.{p}"
 
 
+def _attr_escape(s: str) -> str:
+    """Escape a string for embedding inside a single-quoted HTML attribute."""
+    return (
+        s.replace("&", "&amp;")
+        .replace("'", "&#39;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+
+
+def _grk_span(text: str, strong: str, parsing: dict | None = None) -> str:
+    """Wrap source-word text in a clickable span carrying its popup data.
+
+    `parsing`, when given, is the word's local fhl_isa morphology (see
+    `_load_fhl_parsing`) and is embedded as `data-fhl` so the click-popup can
+    render it without a network fetch.  `strong` (the Strong's code) is kept
+    as `data-strongs` regardless, as the popup's fallback when there is no
+    local match.
+    """
+    if not strong and not parsing:
+        return text
+    attrs = []
+    if strong:
+        attrs.append(f"data-strongs='{strong}'")
+    if parsing:
+        payload = _attr_escape(json.dumps(parsing, ensure_ascii=False))
+        attrs.append(f"data-fhl='{payload}'")
+    return f"<span class='grk' {' '.join(attrs)}>{text}</span>"
+
+
 def _anchor(token: AlignmentToken, verse_tids: list[str], is_r2l: bool) -> str | None:
     """Return the target_id that should display the Greek/Hebrew source text."""
     if not token.sources or token.is_neq_tgt:
@@ -194,6 +432,7 @@ def _render_cell(
     is_r2l: bool,
     acai_entities: dict[str, list[AcaiEntity]],
     tag_acai: bool,
+    word_parsing: dict[str, dict] | None = None,
 ) -> str:
     anchor = _anchor(token, verse_tids, is_r2l)
     is_anchor = target_id == anchor
@@ -239,7 +478,9 @@ def _render_cell(
         parts: list[str] = []
         for sid in sorted(token.sources):
             idx = _source_index(sid, target_id)
-            parts.append(f"{token.sources[sid]}<sub class='sub'>{idx}</sub>")
+            parsing = (word_parsing or {}).get(token.sources[sid])
+            grk = _grk_span(token.sources[sid], token.source_strongs.get(sid, ""), parsing)
+            parts.append(f"{grk}<sub class='sub'>{idx}</sub>")
         if len(parts) > 1:
             inner = "&nbsp;".join(parts)
             greek_html = f"‹{inner}›"
@@ -303,6 +544,7 @@ def _precompute_idiom_cells(
     acai_entities: dict[str, list[AcaiEntity]],
     tag_acai: bool,
     out: dict[str, tuple[str | None, list[str]]],
+    word_parsing: dict[str, dict] | None = None,
 ) -> None:
     """Populate out[target_id] = (html | None, source_ids) for an idiom record.
 
@@ -339,7 +581,9 @@ def _precompute_idiom_cells(
         parts: list[str] = []
         for sid in sorted(token.sources):
             idx = _source_index(sid, anchor_display)
-            parts.append(f"{token.sources[sid]}<sub class='sub'>{idx}</sub>")
+            parsing = (word_parsing or {}).get(token.sources[sid])
+            grk = _grk_span(token.sources[sid], token.source_strongs.get(sid, ""), parsing)
+            parts.append(f"{grk}<sub class='sub'>{idx}</sub>")
         inner = "&nbsp;".join(parts)
         greek_html = f"‹{inner}›" if len(parts) > 1 else inner
         src_row = f"<div class='src'>{greek_html}</div>"
@@ -376,6 +620,7 @@ def _precompute_multiprimary_cells(
     acai_entities: dict[str, list[AcaiEntity]],
     tag_acai: bool,
     out: dict[str, tuple[str | None, list[str]]],
+    word_parsing: dict[str, dict] | None = None,
 ) -> None:
     """Populate out[target_id] for a non-idiom record with multiple primary targets.
 
@@ -414,7 +659,8 @@ def _precompute_multiprimary_cells(
 
     if token.sources:
         parts = [
-            f"{token.sources[sid]}<sub class='sub'>{_source_index(sid, anchor_display)}</sub>"
+            f"{_grk_span(token.sources[sid], token.source_strongs.get(sid, ''), (word_parsing or {}).get(token.sources[sid]))}"
+            f"<sub class='sub'>{_source_index(sid, anchor_display)}</sub>"
             for sid in sorted(token.sources)
         ]
         inner = "&nbsp;".join(parts)
@@ -481,6 +727,7 @@ def write_verse(
     sources_with_targets: dict,
     tag_acai: bool,
     tgt_verse_bcvid: str = "",
+    word_parsing: dict[str, dict] | None = None,
 ) -> None:
     cells: list[dict] = []  # {"html": str, "source_ids": list[str]}
 
@@ -496,10 +743,10 @@ def write_verse(
         tok = tok_list[0]
         if tok.is_idiom and id(tok) not in seen_idiom_ids:
             seen_idiom_ids.add(id(tok))
-            _precompute_idiom_cells(tok, verse_tids, is_r2l, acai_entities, tag_acai, idiom_cell_map)
+            _precompute_idiom_cells(tok, verse_tids, is_r2l, acai_entities, tag_acai, idiom_cell_map, word_parsing)
         elif not tok.is_idiom and len(tok.primary_targets) > 1 and id(tok) not in seen_multiprimary_ids:
             seen_multiprimary_ids.add(id(tok))
-            _precompute_multiprimary_cells(tok, verse_tids, is_r2l, acai_entities, tag_acai, multiprimary_cell_map)
+            _precompute_multiprimary_cells(tok, verse_tids, is_r2l, acai_entities, tag_acai, multiprimary_cell_map, word_parsing)
 
     for target_id in verse_tids:
         tok_list = alignments.get(target_id, [])
@@ -521,7 +768,7 @@ def write_verse(
                 continue  # absorbed into merged anchor cell
             cells.append({"html": cell_html, "source_ids": src_ids})
         else:
-            cell_html = _render_cell(target_id, tok, verse_tids, is_r2l, acai_entities, tag_acai)
+            cell_html = _render_cell(target_id, tok, verse_tids, is_r2l, acai_entities, tag_acai, word_parsing)
             cells.append({"html": cell_html, "source_ids": list(tok.sources.keys())})
 
     # insert unaligned / NEQ source tokens in positional order
@@ -556,9 +803,11 @@ def write_verse(
         tgt_cls = " class='neq'" if is_neq else ""
 
         tgt_row = f"<div class='tgt'><span{tgt_cls}>{marker}</span></div>"
+        parsing = (word_parsing or {}).get(source_text)
+        grk = _grk_span(source_text, "", parsing)
         src_row = (
             f"<div class='src'><span{src_cls}>"
-            f"{source_text}<sub class='sub'>{idx_str}</sub></span></div>"
+            f"{grk}<sub class='sub'>{idx_str}</sub></span></div>"
         )
         src_cell = {"html": f"<div class='cell'>{tgt_row}{src_row}</div>", "source_ids": [unused_id]}
 
@@ -625,9 +874,10 @@ def _html_open(is_r2l: bool) -> str:
         return (
             "<html dir='rtl'>\n<head>\n<meta charset=\"utf-8\">\n"
             + _CSS
+            + _JS
             + "<style>body { direction: rtl; }</style>\n"
         )
-    return "<html>\n<head>\n<meta charset=\"utf-8\">\n" + _CSS
+    return "<html>\n<head>\n<meta charset=\"utf-8\">\n" + _CSS + _JS
 
 
 def _build_meta_row(meta_info: dict) -> str:
@@ -810,6 +1060,14 @@ def parse_args() -> argparse.Namespace:
                         "--alignment-lang when omitted; pass --r2l/--no-r2l to override.")
     p.add_argument("--target-edition-name", default=None,
                    help="Full translation name shown in the HTML header (e.g. 'Biblia de Nuestra Familia')")
+    p.add_argument("--fhl-parsing-dir", default=None, type=Path,
+                   help="Directory containing fhl_isa's bibleParsingLookup.js, "
+                        "lookup_cli.js, and bible_parsing.db. When given, the "
+                        "click-popup on Greek/Hebrew source words is filled in "
+                        "at render time with local morphology (offline, no "
+                        "fhl.net fetch) for any word found in that database.")
+    p.add_argument("--fhl-node-bin", default="node",
+                   help="Node executable used to run fhl_isa's lookup script (default: node)")
     p.set_defaults(**config_defaults)
     args = p.parse_args()
     require(args, "alignment_lang", "alignment_edition", "lang_data_path", "output_dir")
@@ -874,6 +1132,15 @@ def main() -> None:
         neq_target = mgr.alignmentsreader.neq_target
         sources_with_targets = get_sources_with_targets(mgr.bcv["records"])
 
+        word_parsing: dict[str, dict] = {}
+        if args.fhl_parsing_dir:
+            all_source_words = {
+                src.text for src_list in mgr.bcv["sources"].values() for src in src_list
+            }
+            print(f"  Looking up local fhl_isa morphology for {len(all_source_words)} distinct word(s) ...")
+            word_parsing = _load_fhl_parsing(all_source_words, args.fhl_parsing_dir, args.fhl_node_bin)
+            print(f"  fhl_isa matched {len(word_parsing)}/{len(all_source_words)} word(s)")
+
         # ── build verse-mapping dicts for merged-verse support ──────────
         # _src_to_tgt_verse: source verse BCV → target verse BCV, derived
         # from alignment records.  Needed for record processing (line below)
@@ -931,6 +1198,7 @@ def main() -> None:
 
             for alignment in record:
                 al_sources = get_alignment_sources(alignment.source_selectors, sources)
+                al_source_strongs = get_alignment_source_strongs(alignment.source_selectors, sources)
                 al_targets = get_alignment_targets(alignment.target_selectors, targets_source)
                 if not al_targets and alignment.target_selectors:
                     # Fallback for tokens whose source_verse in the TSV defaults to their
@@ -952,6 +1220,7 @@ def main() -> None:
                 token = AlignmentToken(
                     targets=al_targets,
                     sources=al_sources,
+                    source_strongs=al_source_strongs,
                     primary_targets=pri_tgts,
                     secondary_targets=sec_tgts,
                     is_idiom=alignment.meta.is_idiom,
@@ -1042,7 +1311,7 @@ def main() -> None:
             write_verse(
                 html_out, verse_tids, alignments, unused,
                 neq_source, is_r2l, acai_word_map, sources_with_targets, tag_acai,
-                tgt_verse_bcvid=src_bcvid,
+                tgt_verse_bcvid=src_bcvid, word_parsing=word_parsing,
             )
 
         if html_out is not None:

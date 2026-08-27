@@ -220,3 +220,12 @@ staging/
 
 # Throwaway test data/scripts (not project deliverables)
 scratch/
+
+# ACAI data repo (cloned locally in-place; not part of this repo)
+BibleAquifer/
+
+# fhl_isa: npm build artifacts and large reference-data binaries (>100MB,
+# exceeds GitHub's file size limit) — keep the JS source, not these
+fhl_isa/node_modules/
+fhl_isa/*.db
+fhl_isa/*.zip

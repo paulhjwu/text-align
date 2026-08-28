@@ -76,6 +76,28 @@ Each file's `<h1>`-adjacent meta row reports the edition, LLM provider/model/
 reasoning effort (read back from the alignment JSON's `group_meta["llm"]`),
 and the render date (`_build_meta_row`, `AlignmentsReader.group_meta`).
 
+### `--flip`: source-anchored alternate view
+
+With `--flip`, an additional file is written per chapter alongside the normal
+one — `<book>-<chapter>-flip.html` — with the source and target roles
+swapped: cells follow the verse's own source-language order (not translation
+order), TOP holds the source word(s), BOTTOM holds the translation. A legend
+is written at the top of each flip file. Built by `write_verse_flip` /
+`_precompute_flip_cells`, mirroring `write_verse` / `_precompute_idiom_cells`
+/ `_precompute_multiprimary_cells` with the axes swapped:
+
+| Correspondence | Normal view | Flip view |
+|---|---|---|
+| Primary — direct lexical/semantic link | plain text | plain text |
+| Secondary — grammatically implied, no separate source word | (no dedicated visual marker; shown via cell placement) | `.sec`, italic |
+| NEQ — positive claim of no correspondence | grey `≠` | grey `≠` |
+| Idiom — phrase-to-phrase, treated as one unit | `.idiom`, italic, merged cell | `.idiom`, italic, merged cell |
+
+Reuses the same input data already loaded for the normal pass (`alignments`,
+`_tgt_combined_sources`, `sources_with_targets`, `acai_word_map`,
+`word_parsing`) — no extra inputs or files are required beyond what `render-alignment`
+already loads.
+
 ## Key dependency notes
 
 - **NT vs OT run independently in the same invocation** — one `render-alignment`

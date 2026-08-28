@@ -34,6 +34,16 @@ subprocess call per corpus.  Words with no local match, or when
 behavior: a live fetch of the Strong's-number dictionary entry from
 bible.fhl.net.
 
+``--flip`` additionally writes one ``<chapter>-flip.html`` per chapter, with
+the source/target roles swapped: cells are ordered by the verse's own source
+(Greek/Hebrew) index rather than translation order, TOP holds the source
+word(s) and BOTTOM the translation, and every correspondence type is
+distinguished visually — Primary (plain), Secondary (`.sec`, italic, no
+separate source word), NEQ (`.neq`, grey ``≠``, a positive claim of no
+correspondence), and Idiom (`.idiom`, italic, phrase-to-phrase merged into
+one cell). A legend is written at the top of each flip file. See
+``write_verse_flip`` / ``_precompute_flip_cells``.
+
 CLI entry point: ``render-alignment``
 """
 
@@ -75,6 +85,14 @@ body  { font-family: serif; font-size: 14px; }
 .src  { display: block; font-size: 90%; }
 .neq  { color: #bbb; }
 .idiom{ font-style: italic; }
+.sec  { font-style: italic; color: #557; }
+
+.legend { font-family: Arial, sans-serif; font-size: 12px; color: #444;
+          margin: 0 0 14px 0; padding: 8px 10px; background: #f6f6f6;
+          border-radius: 4px; border: 1px solid #e2e2e2; }
+.legend b { color: #222; }
+.legend .legend-item { margin-right: 18px; white-space: nowrap; }
+.legend .sample { padding: 0 2px; }
 
 .sub  { font-size: 60%; }
 .tri  { font-size: 90%; vertical-align: 1px; }
@@ -349,10 +367,14 @@ def get_unused_verse_sources(
 # Cell rendering helpers
 # ---------------------------------------------------------------------------
 
-def _source_index(src_id: str, target_id: str) -> str:
-    """Return the subscript index string for a source token."""
-    src_bcv = BCVWPID(src_id)
-    tgt_bcv = BCVWPID(target_id)
+def _word_index(word_id: str, ref_id: str) -> str:
+    """Return the subscript index string for `word_id`, positioned relative
+    to `ref_id` (same verse / same chapter / elsewhere). Generic over any
+    BCVWPID-shaped id pair — used for source-relative-to-target indices in
+    the normal view and target-relative-to-source indices in `--flip` mode.
+    """
+    src_bcv = BCVWPID(word_id)
+    tgt_bcv = BCVWPID(ref_id)
     is_nt = int(src_bcv.book_ID) > 39
     same_verse = src_bcv.to_bcvid == tgt_bcv.to_bcvid
     same_chapter = src_bcv.chapter_ID == tgt_bcv.chapter_ID
@@ -477,7 +499,7 @@ def _render_cell(
     if is_anchor:
         parts: list[str] = []
         for sid in sorted(token.sources):
-            idx = _source_index(sid, target_id)
+            idx = _word_index(sid, target_id)
             parsing = (word_parsing or {}).get(token.sources[sid])
             grk = _grk_span(token.sources[sid], token.source_strongs.get(sid, ""), parsing)
             parts.append(f"{grk}<sub class='sub'>{idx}</sub>")
@@ -492,7 +514,7 @@ def _render_cell(
         anchor_tid = _anchor(token, verse_tids, is_r2l)
         if anchor_tid and token.sources:
             ref_src_id = sorted(token.sources.keys())[0]
-            ref_idx = _source_index(ref_src_id, anchor_tid)
+            ref_idx = _word_index(ref_src_id, anchor_tid)
             ap = verse_tids.index(anchor_tid)
             mp = verse_tids.index(target_id)
             tri = _tri_toward(mp, ap, is_r2l)
@@ -580,7 +602,7 @@ def _precompute_idiom_cells(
     if token.sources:
         parts: list[str] = []
         for sid in sorted(token.sources):
-            idx = _source_index(sid, anchor_display)
+            idx = _word_index(sid, anchor_display)
             parsing = (word_parsing or {}).get(token.sources[sid])
             grk = _grk_span(token.sources[sid], token.source_strongs.get(sid, ""), parsing)
             parts.append(f"{grk}<sub class='sub'>{idx}</sub>")
@@ -597,7 +619,7 @@ def _precompute_idiom_cells(
             out[t] = (None, [])
 
     # ── triangle+number cells for non-anchor runs ────────────────────────
-    ref_idx = _source_index(sorted(token.sources.keys())[0], anchor_display) if token.sources else ""
+    ref_idx = _word_index(sorted(token.sources.keys())[0], anchor_display) if token.sources else ""
     anchor_pos = verse_tids.index(anchor_display)
     for run in runs:
         if run is anchor_run:
@@ -642,7 +664,7 @@ def _precompute_multiprimary_cells(
     )
     anchor_display = anchor_run[0] if is_r2l else anchor_run[-1]
     anchor_pos = verse_tids.index(anchor_display)
-    ref_idx = _source_index(sorted(token.sources.keys())[0], anchor_display) if token.sources else ""
+    ref_idx = _word_index(sorted(token.sources.keys())[0], anchor_display) if token.sources else ""
 
     # ── anchor run ───────────────────────────────────────────────────────────
     combined = " ".join(token.targets.get(t, "") for t in anchor_run)
@@ -660,7 +682,7 @@ def _precompute_multiprimary_cells(
     if token.sources:
         parts = [
             f"{_grk_span(token.sources[sid], token.source_strongs.get(sid, ''), (word_parsing or {}).get(token.sources[sid]))}"
-            f"<sub class='sub'>{_source_index(sid, anchor_display)}</sub>"
+            f"<sub class='sub'>{_word_index(sid, anchor_display)}</sub>"
             for sid in sorted(token.sources)
         ]
         inner = "&nbsp;".join(parts)
@@ -710,6 +732,245 @@ def _precompute_multiprimary_cells(
             src_row_s = f"<div class='src'><span class='arr'>{arrow}</span></div>"
 
         out[t] = (f"<div class='cell'><div class='tgt'>{tgt_text}</div>{src_row_s}</div>", [])
+
+
+# ---------------------------------------------------------------------------
+# --flip rendering: source word on top (verse's own source order), its
+# correspondence(s) below. Mirrors the cell-building helpers above with the
+# source/target axes swapped: CSS classes are unchanged ('.tgt' = top row,
+# '.src' = bottom row, 90% size), but in flip mode '.tgt' holds the source
+# word and '.src' holds the translation, so the anchor headword keeps the
+# larger top-row styling regardless of which language it is.
+# ---------------------------------------------------------------------------
+
+_FLIP_LEGEND = (
+    "<div class='legend'>"
+    "<span class='legend-item'><b>Primary</b> <span class='sample'>word</span> "
+    "— direct lexical/semantic link</span>"
+    "<span class='legend-item'><b>Secondary</b> <span class='sample sec'>word</span> "
+    "— grammatically implied, no separate source word</span>"
+    "<span class='legend-item'><b>NEQ</b> <span class='sample neq'>≠</span> "
+    "— positive claim of no correspondence</span>"
+    "<span class='legend-item'><b>Idiom</b> <span class='sample idiom'>phrase</span> "
+    "— phrase-to-phrase, treated as one unit</span>"
+    "</div>\n"
+)
+
+
+def _precompute_flip_cells(
+    token: AlignmentToken,
+    verse_source_ids: list[str],
+    is_r2l: bool,
+    acai_entities: dict[str, list[AcaiEntity]],
+    tag_acai: bool,
+    out: dict[str, tuple[str | None, list[str]]],
+    word_parsing: dict[str, dict] | None = None,
+) -> None:
+    """Populate out[source_id] = (html | None, target_ids) for one alignment
+    record in --flip (source-anchored) mode.
+
+    Groups the record's source ids into contiguous runs (within
+    verse_source_ids order); the anchor run (longest, rightmost for LTR /
+    leftmost for RTL — same tie-break as the target-anchored helpers above)
+    renders as one merged cell: TOP = joined source word(s), clickable and
+    subscript-indexed when there is more than one; BOTTOM = every target word
+    the record covers, each individually marked primary (plain) or secondary
+    (`.sec`, italic) — with the whole row additionally marked `.idiom` or
+    `.neq` when the record is flagged as such. Non-anchor runs (a record's
+    source ids split by intervening, unrelated source tokens) render as
+    pointer cells (triangle + index) back to the anchor.
+    """
+    rec_src_ids = [s for s in verse_source_ids if s in token.sources]
+    if not rec_src_ids:
+        return
+
+    runs = _contiguous_runs(rec_src_ids, verse_source_ids)
+    anchor_run = max(
+        runs,
+        key=lambda r: (len(r), verse_source_ids.index(r[-1]) if not is_r2l else -verse_source_ids.index(r[0])),
+    )
+    anchor_display = anchor_run[0] if is_r2l else anchor_run[-1]
+
+    # ── bottom row: every target word, primary/secondary distinguished,
+    # each subscript-indexed by its own position in the translation ────────
+    ordered_tids = sorted(token.targets)
+    tgt_parts = []
+    for t in ordered_tids:
+        text = token.targets[t]
+        idx = _word_index(t, anchor_display)
+        word_html = f"<span class='sec'>{text}</span>" if t in token.secondary_targets else text
+        tgt_parts.append(f"{word_html}<sub class='sub'>{idx}</sub>")
+    combined_tgt = "&nbsp;".join(tgt_parts)
+    if len(tgt_parts) > 1:
+        combined_tgt = f"‹{combined_tgt}›"
+
+    translation_classes = ["src"]
+    if token.is_idiom:
+        translation_classes.append("idiom")
+    if token.is_neq_tgt:
+        translation_classes.append("neq")
+    translation_row = f"<div class='{' '.join(translation_classes)}'>{combined_tgt}</div>"
+
+    # ── top row: anchor run's source word(s) ────────────────────────────────
+    src_parts = []
+    for sid in anchor_run:
+        idx = _word_index(sid, anchor_display)
+        parsing = (word_parsing or {}).get(token.sources[sid])
+        grk = _grk_span(token.sources[sid], token.source_strongs.get(sid, ""), parsing)
+        src_parts.append(f"{grk}<sub class='sub'>{idx}</sub>")
+    source_inner = "&nbsp;".join(src_parts)
+    if len(src_parts) > 1:
+        source_inner = f"‹{source_inner}›"
+
+    if tag_acai and not token.is_neq_tgt:
+        acai_hits = [ae for sid in anchor_run for ae in acai_entities.get(sid, [])]
+        if acai_hits:
+            tag_str = " ".join(ae.id for ae in acai_hits)
+            source_inner = f"<span class='acai-hl'>{source_inner}</span><span class='acai-tag'>{tag_str}</span>"
+    source_row = f"<div class='tgt'>{source_inner}</div>"
+
+    out[anchor_display] = (f"<div class='cell'>{source_row}{translation_row}</div>", list(token.targets.keys()))
+    for s in anchor_run:
+        if s != anchor_display:
+            out[s] = (None, [])
+
+    # ── non-anchor runs: pointer cells back to the anchor ───────────────────
+    ref_idx = _word_index(anchor_run[0], anchor_display)
+    anchor_pos = verse_source_ids.index(anchor_display)
+    for run in runs:
+        if run is anchor_run:
+            continue
+        run_display = run[0] if is_r2l else run[-1]
+        tri = _tri_toward(verse_source_ids.index(run_display), anchor_pos, is_r2l)
+        combined_r = " ".join(token.sources.get(s, "") for s in run)
+        source_row_r = f"<div class='tgt'>{combined_r}</div>"
+        translation_row_r = f"<div class='src'><span class='arr'><span class='tri'>{tri}</span><sub class='sub'>{ref_idx}</sub></span></div>"
+        out[run_display] = (f"<div class='cell'>{source_row_r}{translation_row_r}</div>", [])
+        for s in run:
+            if s != run_display:
+                out[s] = (None, [])
+
+
+def write_verse_flip(
+    html_out,
+    verse_tids: list[str],
+    alignments: dict[str, list[AlignmentToken]],
+    combined_sources: list,
+    neq_source: frozenset[str],
+    neq_target: frozenset[str],
+    is_r2l: bool,
+    acai_entities: dict[str, list[AcaiEntity]],
+    sources_with_targets: dict,
+    tag_acai: bool,
+    word_parsing: dict[str, dict] | None = None,
+) -> None:
+    """--flip mode: source word on top (verse's own source order), its
+    correspondence(s) below. Mirrors write_verse with source and target roles
+    swapped; see _precompute_flip_cells for the per-record cell logic.
+    """
+    verse_source_ids = sorted(src.id for src in combined_sources)
+    unused_source_ids = get_unused_verse_sources(verse_tids, alignments, combined_sources) if combined_sources else {}
+
+    cell_map: dict[str, tuple[str | None, list[str]]] = {}
+    seen_ids: set[int] = set()
+    for target_id in verse_tids:
+        tok_list = alignments.get(target_id, [])
+        if not tok_list:
+            continue
+        tok = tok_list[0]
+        if not tok.sources or id(tok) in seen_ids:
+            continue
+        seen_ids.add(id(tok))
+        _precompute_flip_cells(tok, verse_source_ids, is_r2l, acai_entities, tag_acai, cell_map, word_parsing)
+
+    cells: list[dict] = []  # {"html": str, "target_ids": list[str]}
+    for source_id in verse_source_ids:
+        if source_id in cell_map:
+            cell_html, tgt_ids = cell_map[source_id]
+            if cell_html is None:
+                continue  # absorbed into merged anchor cell
+            cells.append({"html": cell_html, "target_ids": tgt_ids})
+        elif source_id in unused_source_ids and source_id not in sources_with_targets:
+            # source token with no alignment record at all — either NEQ (positive
+            # claim of no correspondence) or simply unaligned.
+            source_text = unused_source_ids[source_id]
+            is_neq = source_id in neq_source
+            marker = "≠" if is_neq else "•"
+            cls = " class='neq'" if is_neq else ""
+            idx = _word_index(source_id, source_id)
+            parsing = (word_parsing or {}).get(source_text)
+            grk = _grk_span(source_text, "", parsing)
+            source_row = f"<div class='tgt'><span{cls}>{grk}<sub class='sub'>{idx}</sub></span></div>"
+            translation_row = f"<div class='src'><span{cls}>{marker}</span></div>"
+            cells.append({"html": f"<div class='cell'>{source_row}{translation_row}</div>", "target_ids": []})
+
+    # ── orphan targets: no source at all (unaligned or NEQ target) ─────────
+    # These have no natural position in source order, so insert each one
+    # next to the translation-cell of its nearest positioned neighbor by
+    # target id — the mirror of write_verse's unused-source insertion.
+    orphan_tids: list[str] = []
+    for tid in verse_tids:
+        tok_list = alignments.get(tid, [])
+        if tok_list and not tok_list[0].sources:
+            orphan_tids.append(tid)
+
+    for tid in orphan_tids:
+        tok = alignments[tid][0]
+        tgt_text = tok.targets.get(tid, "")
+        is_neq = tok.is_neq_tgt or tid in neq_target
+        if is_neq:
+            source_row = "<div class='tgt'><span class='neq'>≠</span></div>"
+            text_cls = " class='neq'"
+        elif re.search(r"\w", tgt_text):
+            source_row = "<div class='tgt'><span class='arr'>•</span></div>"
+            text_cls = ""
+        else:
+            source_row = "<div class='tgt'>&nbsp;</div>"
+            text_cls = ""
+        idx = _word_index(tid, tid)
+        translation_row = f"<div class='src'><span{text_cls}>{tgt_text}<sub class='sub'>{idx}</sub></span></div>"
+        orphan_cell = {"html": f"<div class='cell'>{source_row}{translation_row}</div>", "target_ids": [tid]}
+
+        try:
+            orphan_int = int(tid)
+        except (ValueError, TypeError):
+            orphan_int = None
+
+        best_after_cell = None
+        best_after_int = -1
+        best_before_cell = None
+        best_before_int: int | None = None
+
+        for cell in cells:
+            for t in cell["target_ids"]:
+                try:
+                    t_int = int(t)
+                except (ValueError, TypeError):
+                    continue
+                if orphan_int is not None:
+                    if t_int < orphan_int and t_int > best_after_int:
+                        best_after_int = t_int
+                        best_after_cell = cell
+                    elif t_int > orphan_int and (best_before_int is None or t_int < best_before_int):
+                        best_before_int = t_int
+                        best_before_cell = cell
+
+        if best_after_cell is not None:
+            after_idx = cells.index(best_after_cell)
+            after_tgt_set = set(best_after_cell["target_ids"])
+            while after_idx + 1 < len(cells):
+                if after_tgt_set & set(cells[after_idx + 1]["target_ids"]):
+                    after_idx += 1
+                else:
+                    break
+            cells.insert(after_idx + 1, orphan_cell)
+        elif best_before_cell is not None:
+            cells.insert(cells.index(best_before_cell), orphan_cell)
+        else:
+            cells.append(orphan_cell)
+
+    for cell in cells:
+        html_out.write(cell["html"])
 
 
 # ---------------------------------------------------------------------------
@@ -930,21 +1191,23 @@ def _build_meta_row(meta_info: dict) -> str:
 
 def start_new_chapter(
     html_out, bcv: BCVWPID, viz_path: Path, is_r2l: bool, iso_date: str,
-    meta_info: dict | None = None,
+    meta_info: dict | None = None, suffix: str = "", legend_html: str = "",
 ) -> object:
     if html_out is not None:
         html_out.close()
-    chapter_file = viz_path / f"{bcv.book_ID}-{bcv.chapter_ID}.html"
+    chapter_file = viz_path / f"{bcv.book_ID}-{bcv.chapter_ID}{suffix}.html"
     html_out = open(chapter_file, "w", encoding="utf-8")
     usfm_ref = re.sub(r":[0-9]+$", "", bcv.to_usfm())
     html_out.write(_html_open(is_r2l))
     html_out.write(
-        f"<title>{usfm_ref} ({bcv.book_ID}-{bcv.chapter_ID})</title>\n</head>\n<body>\n"
+        f"<title>{usfm_ref} ({bcv.book_ID}-{bcv.chapter_ID}{suffix})</title>\n</head>\n<body>\n"
     )
     html_out.write(f"<h1>{usfm_ref}</h1>\n")
     effective_meta = dict(meta_info or {})
     effective_meta.setdefault("iso_date", iso_date)
     html_out.write(_build_meta_row(effective_meta))
+    if legend_html:
+        html_out.write(legend_html)
     html_out.write("<div class='chapter'>\n")
     html_out = start_new_verse(html_out, bcv, is_r2l)
     return html_out
@@ -1068,6 +1331,10 @@ def parse_args() -> argparse.Namespace:
                         "fhl.net fetch) for any word found in that database.")
     p.add_argument("--fhl-node-bin", default="node",
                    help="Node executable used to run fhl_isa's lookup script (default: node)")
+    p.add_argument("--flip", action="store_true",
+                   help="Additionally write a source-anchored '<chapter>-flip.html' per "
+                        "chapter: source word on top (sorted by source index), its "
+                        "correspondence(s) — primary, secondary, NEQ, idiom — below.")
     p.set_defaults(**config_defaults)
     args = p.parse_args()
     require(args, "alignment_lang", "alignment_edition", "lang_data_path", "output_dir")
@@ -1318,6 +1585,44 @@ def main() -> None:
             end_chapter(html_out, "book")
 
         print(f"  HTML written to {viz_path}")
+
+        if args.flip:
+            html_out = None
+            prev_chapter_key = ""
+
+            for bcvid, verse_tids in verse_to_tids.items():
+                current_bcv = BCVWPID(verse_tids[0])
+                chapter_key = f"{current_bcv.book_ID}-{current_bcv.chapter_ID}"
+
+                if chapter_key != prev_chapter_key:
+                    if html_out is not None:
+                        end_chapter(html_out)
+                    chapter_file_meta = mgr.alignmentsreader.per_chapter_meta.get(chapter_key)
+                    if chapter_file_meta:
+                        meta_info["llm"] = chapter_file_meta.get("llm") or {}
+                        meta_info["retry_llm"] = chapter_file_meta.get("retry_llm") or {}
+                    html_out = start_new_chapter(
+                        html_out, current_bcv, viz_path, is_r2l, iso_date, meta_info,
+                        suffix="-flip", legend_html=_FLIP_LEGEND,
+                    )
+                    prev_chapter_key = chapter_key
+                else:
+                    end_verse(html_out)
+                    html_out = start_new_verse(html_out, current_bcv, is_r2l)
+
+                src_bcvid = BCVWPID(verse_tids[0]).to_bcvid
+                combined = _tgt_combined_sources.get(src_bcvid, mgr.bcv["sources"].get(src_bcvid, []))
+
+                write_verse_flip(
+                    html_out, verse_tids, alignments, combined,
+                    neq_source, neq_target, is_r2l, acai_word_map, sources_with_targets, tag_acai,
+                    word_parsing=word_parsing,
+                )
+
+            if html_out is not None:
+                end_chapter(html_out, "book")
+
+            print(f"  Flip HTML written to {viz_path}")
 
 
 if __name__ == "__main__":

@@ -704,7 +704,10 @@ render-alignment \
   [--target-edition-name "Biblia de Nuestra Familia Versión Breve"] \
   [--acai-data-dir PATH]  # default derived from git-root (https://github.com/BibleAquifer/ACAI); set null in config to disable
   [--r2l | --no-r2l]  # right-to-left layout; auto-detected from --alignment-lang (arb, apd, fas, heb, arc) when omitted
+  [--flip]  # additionally write <chapter>-flip.html: source-anchored (source word on top, sorted by source index), translation below
 ```
+
+`--flip` writes a second, source-anchored view per chapter (`<book>-<chapter>-flip.html`, alongside the normal file) — cells follow the verse's own source-language order instead of translation order, with the source word on top and its translation(s) below. All four correspondence types are visually distinguished, with a legend at the top of each flip file: Primary (plain text), Secondary (italic, no separate source word), NEQ (grey `≠`, a positive claim of no correspondence), and Idiom (phrase merged into one cell).
 
 ### Comparison
 

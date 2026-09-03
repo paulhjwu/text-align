@@ -254,3 +254,18 @@ def build_batch_message(
         all_maps[vid] = (source_map, target_map)
 
     return "\n\n".join(blocks), all_maps
+
+
+# ---------------------------------------------------------------------------
+# --show-msg debug output
+# ---------------------------------------------------------------------------
+
+def print_llm_message(system_msg: str, user_msg: str, verse_ids: list[str], context: str) -> None:
+    """Print the assembled system prompt and user message for --show-msg."""
+    banner = f"--show-msg: {context} — verses {', '.join(verse_ids)}"
+    print(f"\n{'=' * len(banner)}\n{banner}\n{'=' * len(banner)}")
+    print("--- SYSTEM PROMPT ---")
+    print(system_msg)
+    print("--- USER MESSAGE ---")
+    print(user_msg)
+    print()

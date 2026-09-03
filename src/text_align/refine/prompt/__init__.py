@@ -15,6 +15,7 @@ from .common import (
     build_batch_message as _build_batch_message,
     build_verse_token_maps,
     format_verse_block as _format_verse_block,
+    print_llm_message,
     reverse_map_records,
 )
 from .nt.core import (
@@ -93,6 +94,7 @@ __all__ = [
     "get_nt_language_config",
     "get_ot_language_config",
     "infer_testament",
+    "print_llm_message",
     "register_nt_language",
     "register_ot_language",
     "reverse_map_records",

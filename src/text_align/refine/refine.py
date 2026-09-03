@@ -24,7 +24,13 @@ from text_align.migrate.alignment_io import load_alignment_json, write_alignment
 from text_align.migrate.tsv import process_usfm_tsv
 
 from .llm import LLMClient
-from .prompt import build_batch_message, build_system_prompt, detect_phenomena, infer_testament
+from .prompt import (
+    build_batch_message,
+    build_system_prompt,
+    detect_phenomena,
+    infer_testament,
+    print_llm_message,
+)
 from .source import collect_source_verse_range, load_source_verses
 from .util import _CORPUS_ID
 
@@ -321,6 +327,8 @@ def process_corpus(
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    show_msg = bool(args and getattr(args, "show_msg", False))
+
     if batch_mode == "async":
         _process_corpus_async(
             chapters=chapters,
@@ -339,6 +347,7 @@ def process_corpus(
             creator=creator,
             jobs_dir=jobs_dir,
             skip_existing=skip_existing,
+            show_msg=show_msg,
         )
     else:
         _process_corpus_sync(
@@ -355,6 +364,7 @@ def process_corpus(
             max_retries=max_retries,
             creator=creator,
             skip_existing=skip_existing,
+            show_msg=show_msg,
         )
 
 
@@ -372,6 +382,7 @@ def _process_corpus_sync(
     max_retries: int,
     creator: str,
     skip_existing: bool = False,
+    show_msg: bool = False,
 ) -> None:
     """Synchronous path: call LLM per batch, write one file per chapter."""
     all_san_details_total: list[str] = []
@@ -425,6 +436,11 @@ def _process_corpus_sync(
             phenomena = detect_phenomena(all_src)
             system_msg = build_system_prompt(phenomena, target_language, testament=testament)
             user_msg, batch_maps = build_batch_message(verse_batch, target_language, source_corpus=corpus_id)
+            if show_msg:
+                print_llm_message(
+                    system_msg, user_msg, batch_ids,
+                    context=f"refine chapter {chapter_id} batch {batch_num}/{total_batches}",
+                )
 
             print(
                 f"  Chapter {chapter_id} batch {batch_num}/{total_batches}: "
@@ -493,6 +509,11 @@ def _process_corpus_sync(
                 phenomena = detect_phenomena(all_src)
                 system_msg = build_system_prompt(phenomena, target_language, testament=testament)
                 user_msg, batch_maps = build_batch_message(verse_batch, target_language, source_corpus=corpus_id)
+                if show_msg:
+                    print_llm_message(
+                        system_msg, user_msg, [verse_id],
+                        context=f"refine chapter {chapter_id} resubmit",
+                    )
                 try:
                     r_results, r_errors, r_san = llm_client.call_batch(
                         system_prompt=system_msg,
@@ -590,6 +611,7 @@ def _process_corpus_async(
     creator: str,
     jobs_dir: Path,
     skip_existing: bool = False,
+    show_msg: bool = False,
 ) -> None:
     """Async path: build all request payloads and submit to provider batch API."""
     from .async_batch import submit_batch_job
@@ -630,6 +652,11 @@ def _process_corpus_async(
             phenomena = detect_phenomena(all_src)
             system_msg = build_system_prompt(phenomena, target_language, testament=testament)
             user_msg, _batch_maps = build_batch_message(verse_batch, target_language, source_corpus=corpus_id)
+            if show_msg:
+                print_llm_message(
+                    system_msg, user_msg, batch_ids,
+                    context=f"refine chapter {chapter_id} batch {batch_index + 1} (async)",
+                )
 
             chapter_batches.append({
                 "chapter_id": chapter_id,
@@ -742,6 +769,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--skip-existing", action="store_true", default=False,
                    help="Skip chapters whose output file already exists. "
                         "Pass in GHA so re-triggered jobs don't redo completed chapters.")
+    p.add_argument("--show-msg", action="store_true", default=False,
+                   help="Print the assembled system prompt and user message before each LLM call")
     p.add_argument("--batch-mode", choices=["sync", "async"], default="sync",
                    help="sync: call LLM and write results immediately (default); "
                         "async: submit to provider batch API, then block until "

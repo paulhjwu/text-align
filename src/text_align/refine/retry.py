@@ -13,7 +13,13 @@ from text_align.migrate.alignment_io import load_alignment_json, write_alignment
 
 from .coverage import VerseRetrySpec
 from .llm import LLMClient
-from .prompt import build_batch_message, build_system_prompt, detect_phenomena, infer_testament
+from .prompt import (
+    build_batch_message,
+    build_system_prompt,
+    detect_phenomena,
+    infer_testament,
+    print_llm_message,
+)
 from .refine import build_output_alignment
 from .source import collect_source_verse_range
 from .util import _chapter_id_from_path, _CORPUS_TESTAMENT
@@ -128,6 +134,7 @@ def retry_chapter_sync(
     llm_provider: str | None,
     llm_model: str | None,
     reasoning_effort: str | None,
+    show_msg: bool = False,
 ) -> tuple[int, list[str]]:
     """Re-align flagged verses in one chapter file via the sync LLM path.
 
@@ -167,6 +174,8 @@ def retry_chapter_sync(
         phenomena = detect_phenomena(all_src)
         system_msg = build_system_prompt(phenomena, target_language, testament=testament)
         user_msg, batch_maps = build_batch_message(verse_batch, target_language, source_corpus=corpus_id)
+        if show_msg:
+            print_llm_message(system_msg, user_msg, batch_ids, context="retry batch")
 
         try:
             results, errors, _san = llm_client.call_batch(
@@ -215,6 +224,8 @@ def retry_chapter_sync(
             phenomena = detect_phenomena(all_src)
             system_msg = build_system_prompt(phenomena, target_language, testament=testament)
             user_msg, batch_maps = build_batch_message(verse_batch, target_language, source_corpus=corpus_id)
+            if show_msg:
+                print_llm_message(system_msg, user_msg, [verse_id], context=f"retry resubmit {verse_id}")
             try:
                 r_results, r_errors, _san = llm_client.call_batch(
                     system_prompt=system_msg,
@@ -272,6 +283,7 @@ def build_retry_chapter_batches(
     target_language: str,
     batch_size: int,
     corpus_id: str = "SBLGNT",
+    show_msg: bool = False,
 ) -> list[dict]:
     """Build chapter_batches payload for async submission of retry verses."""
     chapter_batches: list[dict] = []
@@ -301,6 +313,11 @@ def build_retry_chapter_batches(
             phenomena = detect_phenomena(all_src)
             system_msg = build_system_prompt(phenomena, target_language, testament=testament)
             user_msg, _batch_maps = build_batch_message(verse_batch, target_language, source_corpus=corpus_id)
+            if show_msg:
+                print_llm_message(
+                    system_msg, user_msg, batch_ids,
+                    context=f"retry chapter {chapter_id} batch {batch_index + 1} (async)",
+                )
 
             chapter_batches.append({
                 "chapter_id": chapter_id,

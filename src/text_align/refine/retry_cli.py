@@ -107,6 +107,8 @@ def parse_args() -> argparse.Namespace:
                    help=f"Directory for async batch job metadata (default: {_JOBS_DIR})")
     p.add_argument("--dry-run", action="store_true", default=False,
                    help="Report flagged verses without calling the LLM")
+    p.add_argument("--show-msg", action="store_true", default=False,
+                   help="Print the assembled system prompt and user message before each LLM call")
     p.add_argument("--semantic-model", default="sentence-transformers/LaBSE",
                    help="sentence-transformers model for semantic similarity check "
                         "(default: sentence-transformers/LaBSE). Pass empty string to disable.")
@@ -610,6 +612,7 @@ def _run_sync(
             llm_provider=args.llm_provider,
             llm_model=args.llm_model,
             reasoning_effort=args.reasoning_effort,
+            show_msg=args.show_msg,
         )
         print(f"  → {chapter_path.name}: {n_replaced} verse(s) replaced")
 
@@ -648,6 +651,7 @@ def _run_async(
         target_language=args.target_language,
         batch_size=args.batch_size,
         corpus_id=corpus_id,
+        show_msg=args.show_msg,
     )
 
     print(f"\n  Submitting {len(chapter_batches)} request(s) to {args.llm_provider} batch API ...")

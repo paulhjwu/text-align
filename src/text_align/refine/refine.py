@@ -737,7 +737,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--corpora", "--corpus", default=["ot", "nt"], nargs="+", choices=["ot", "nt"],
                    help="Corpora to process (default: ot nt)")
     p.add_argument("--llm-provider", default="openai",
-                   choices=["openai", "anthropic", "google", "openrouter", "gloo", "ollama"],
+                   choices=["openai", "anthropic", "google", "openrouter", "gloo", "deepinfra", "ollama"],
                    help="LLM provider (default: openai)")
     p.add_argument("--llm-model", default="gpt-5.4-mini",
                    help="Model name for the chosen provider (default: gpt-5.4-mini)")

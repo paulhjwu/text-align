@@ -1,6 +1,6 @@
 """Provider-agnostic LLM call layer for refine-alignment.
 
-Supports OpenAI, Anthropic, Google (Gemini), OpenRouter, Gloo, and Ollama.
+Supports OpenAI, Anthropic, Google (Gemini), OpenRouter, Gloo, DeepInfra, and Ollama.
 Provider packages are imported lazily so only the package for the active
 provider needs to be installed.
 
@@ -11,6 +11,7 @@ Environment variables:
     OPENROUTER_API_KEY    — required when provider is "openrouter"
     GLOO_CLIENT_ID        — required when provider is "gloo"
     GLOO_CLIENT_SECRET    — required when provider is "gloo"
+    DEEPINFRA_API_KEY     — required when provider is "deepinfra"
     OLLAMA_BASE_URL       — base URL for provider "ollama" (default: http://localhost:11434/v1)
 """
 
@@ -594,10 +595,11 @@ class LLMClient:
 
     Args:
         provider: ``"openai"``, ``"anthropic"``, ``"google"``, ``"openrouter"``,
-            or ``"gloo"``.
+            ``"gloo"``, ``"deepinfra"``, or ``"ollama"``.
         model: Model name, e.g. ``"gpt-5.4-mini"``, ``"claude-sonnet-4-6"``,
-            ``"gemini-3.1-flash"``, any OpenRouter model slug, or a Gloo model
-            ID such as ``"gloo-anthropic-claude-sonnet-4.5"``.
+            ``"gemini-3.1-flash"``, any OpenRouter model slug, a Gloo model
+            ID such as ``"gloo-anthropic-claude-sonnet-4.5"``, or any DeepInfra
+            model slug such as ``"meta-llama/Llama-3.3-70B-Instruct"``.
         temperature: Sampling temperature passed explicitly to the provider.
             ``None`` (default) lets the provider use its own default.  Set this
             to match the value you use in sync calls so async batch requests
@@ -620,10 +622,10 @@ class LLMClient:
         temperature: float = 1,
         max_output_tokens: int = 4000,
     ) -> None:
-        if provider not in ("openai", "anthropic", "google", "openrouter", "gloo", "ollama"):
+        if provider not in ("openai", "anthropic", "google", "openrouter", "gloo", "deepinfra", "ollama"):
             raise ValueError(
                 f"Unknown provider {provider!r}. "
-                f"Use 'openai', 'anthropic', 'google', 'openrouter', 'gloo', or 'ollama'."
+                f"Use 'openai', 'anthropic', 'google', 'openrouter', 'gloo', 'deepinfra', or 'ollama'."
             )
         self.provider = provider
         self.model = model
@@ -655,6 +657,15 @@ class LLMClient:
             return openai.OpenAI(
                 api_key=os.environ.get("OPENROUTER_API_KEY"),
                 base_url="https://openrouter.ai/api/v1",
+            )
+        elif self.provider == "deepinfra":
+            try:
+                import openai
+            except ImportError:
+                raise ImportError("Install the openai package: poetry add openai")
+            return openai.OpenAI(
+                api_key=os.environ.get("DEEPINFRA_API_KEY"),
+                base_url="https://api.deepinfra.com/v1/openai",
             )
         elif self.provider == "gloo":
             try:
@@ -730,7 +741,7 @@ class LLMClient:
             that remained after all retries, and ``san_details`` is a list of
             human-readable strings describing each sanitization event.
         """
-        if self.provider in ("openai", "openrouter", "ollama"):
+        if self.provider in ("openai", "openrouter", "deepinfra", "ollama"):
             return self._call_openai(
                 system_prompt, user_message, verse_source_ids, verse_target_ids,
                 verse_token_maps, max_retries
@@ -764,7 +775,7 @@ class LLMClient:
         verse_token_maps: dict[str, tuple[dict[int, str], dict[int, str]]] | None,
         max_retries: int,
     ) -> tuple[dict[str, list[dict]], list[str], list[str]]:
-        if self.reasoning_effort is not None and self.provider not in ("openrouter", "ollama"):
+        if self.reasoning_effort is not None and self.provider not in ("openrouter", "deepinfra", "ollama"):
             return self._call_openai_responses(
                 system_prompt, user_message, verse_source_ids, verse_target_ids,
                 verse_token_maps, max_retries

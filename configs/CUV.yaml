@@ -39,7 +39,7 @@ llm_model: gloo-google-gemini-3.7-flash # cheap through Dec 31 2026, then double
 # retry-alignment settings
 # ---------------------------------------------------------------------------
 
-fallback_threshold: 0.30
+fallback_threshold: 1.1  # >1.0 so it can never trigger (flagged ratio maxes at 1.0) — 62002's 93% flagged rate would otherwise force the cheap refine model instead of the Gemini retry model
 
 # LLM provider and model for retry-alignment (the second-pass / quality-repair step).
 # If absent, retry-alignment falls back to the llm_provider / llm_model /

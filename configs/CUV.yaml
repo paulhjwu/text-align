@@ -45,8 +45,8 @@ fallback_threshold: 0.30
 # If absent, retry-alignment falls back to the llm_provider / llm_model /
 # reasoning_effort values above. Set these to use a different (typically better)
 # model for the retry pass than the initial refine pass.
-retry_llm_provider: gloo
-retry_llm_model: gloo-google-gemini-3.1-pro
+retry_llm_provider: google
+retry_llm_model: gemini-3.1-pro-preview
 retry_max_output_tokens: 32000
 # Alignment quality scoring threshold for retry-alignment and score-alignment.
 # Verses with a composite penalty score above this value are flagged for retry.

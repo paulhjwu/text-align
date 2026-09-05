@@ -1,0 +1,154 @@
+{
+  "name": "n8n-refine-retry-chapter",
+  "nodes": [
+    {
+      "id": "swf1",
+      "name": "Execute Workflow Trigger",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [0, 0],
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            { "name": "workDir", "type": "string" },
+            { "name": "config", "type": "string" },
+            { "name": "corpus", "type": "string" },
+            { "name": "chapterArgs", "type": "string" },
+            { "name": "batchMode", "type": "string" },
+            { "name": "fallbackThresholdFlag", "type": "string" },
+            { "name": "maxRetryPasses", "type": "number" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "swf2",
+      "name": "Refine Alignment",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [260, 0],
+      "parameters": {
+        "command": "=cd {{$json.workDir}} && poetry run refine-alignment --config {{$json.config}} --corpus {{$json.corpus}} {{$json.chapterArgs}} --skip-existing --batch-mode {{$json.batchMode}}"
+      },
+      "continueOnFail": false
+    },
+    {
+      "id": "swf3",
+      "name": "Pass Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [520, 0],
+      "parameters": {
+        "jsCode": "// Reset the run context from the trigger on every visit (first pass AND every\n// loop-back), rather than trusting Execute Command's output to carry fields\n// through -- it only emits {exitCode, stdout, stderr} for itself.\nconst trigger = $('Execute Workflow Trigger').item.json;\nconst prevPass = $json.passNumber || 0;\nreturn [{\n  json: {\n    workDir: trigger.workDir,\n    config: trigger.config,\n    corpus: trigger.corpus,\n    chapterArgs: trigger.chapterArgs,\n    batchMode: trigger.batchMode,\n    fallbackThresholdFlag: trigger.fallbackThresholdFlag || '',\n    maxRetryPasses: trigger.maxRetryPasses,\n    passNumber: prevPass + 1\n  }\n}];"
+      }
+    },
+    {
+      "id": "swf4",
+      "name": "Retry Alignment",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [780, 0],
+      "parameters": {
+        "command": "=cd {{$json.workDir}} && poetry run retry-alignment --config {{$json.config}} --corpus {{$json.corpus}} {{$json.chapterArgs}} --batch-mode {{$json.batchMode}}{{$json.fallbackThresholdFlag}}"
+      },
+      "continueOnFail": true
+    },
+    {
+      "id": "swf5",
+      "name": "Attach Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1040, 0],
+      "parameters": {
+        "jsCode": "// Retry Alignment's own output only carries {exitCode, stdout, stderr} --\n// pull passNumber/maxRetryPasses back from Pass Context by name, not by\n// assuming they passed through this node's input.\nconst ctx = $('Pass Context').item.json;\nreturn [{\n  json: {\n    ...ctx,\n    exitCode: $json.exitCode,\n    stdout: $json.stdout,\n    stderr: $json.stderr\n  }\n}];"
+      }
+    },
+    {
+      "id": "swf6",
+      "name": "Exit Code Router",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [1300, 0],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "combinator": "and",
+                "conditions": [
+                  { "leftValue": "={{$json.exitCode}}", "rightValue": 0, "operator": { "type": "number", "operation": "equals" } }
+                ]
+              },
+              "outputKey": "done"
+            },
+            {
+              "conditions": {
+                "combinator": "and",
+                "conditions": [
+                  { "leftValue": "={{$json.exitCode}}", "rightValue": 2, "operator": { "type": "number", "operation": "equals" } },
+                  { "leftValue": "={{$json.passNumber}}", "rightValue": "={{$json.maxRetryPasses}}", "operator": { "type": "number", "operation": "lt" } }
+                ]
+              },
+              "outputKey": "loop"
+            },
+            {
+              "conditions": {
+                "combinator": "and",
+                "conditions": [
+                  { "leftValue": "={{$json.exitCode}}", "rightValue": 2, "operator": { "type": "number", "operation": "equals" } },
+                  { "leftValue": "={{$json.passNumber}}", "rightValue": "={{$json.maxRetryPasses}}", "operator": { "type": "number", "operation": "gte" } }
+                ]
+              },
+              "outputKey": "cap"
+            }
+          ]
+        },
+        "fallbackOutput": "extra",
+        "options": {}
+      }
+    },
+    { "id": "swf7", "name": "Retry Done", "type": "n8n-nodes-base.noOp", "typeVersion": 1, "position": [1560, -180], "parameters": {} },
+    { "id": "swf8", "name": "Retry Cap Reached (still flagged)", "type": "n8n-nodes-base.noOp", "typeVersion": 1, "position": [1560, 0], "parameters": {} },
+    {
+      "id": "swf9",
+      "name": "Unexpected Exit Code",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [1560, 180],
+      "parameters": {
+        "errorType": "errorMessage",
+        "errorMessage": "=retry-alignment exited {{$json.exitCode}} (expected 0 or 2): {{$json.stderr}}"
+      }
+    },
+    { "id": "swf10", "name": "Chapter Complete", "type": "n8n-nodes-base.noOp", "typeVersion": 1, "position": [1820, -90], "parameters": {} },
+    {
+      "id": "swf11",
+      "name": "Sticky Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [520, -320],
+      "parameters": {
+        "width": 560,
+        "height": 220,
+        "content": "### Do/while retry loop\nThe \"loop\" branch of Exit Code Router connects back to **Pass Context**, not to n8n's Split-In-Batches/Loop-Over-Items node -- this is a condition-based do/while (retry while exit code == 2, capped at maxRetryPasses), built as a cycle on the canvas. Pass Context re-derives every static field from Execute Workflow Trigger on every visit (initial and loop-back) rather than trusting Execute Command's output to carry fields through, since Execute Command only emits {exitCode, stdout, stderr} for itself.\n\nretry-alignment exit codes (verified in retry_cli.py): 0 = done (nothing flagged, or the expensive retry model was used this pass); 2 = the cheap fallback model was used because the flagged rate crossed --fallback-threshold -- run again; anything else = a real failure."
+      }
+    }
+  ],
+  "connections": {
+    "Execute Workflow Trigger": { "main": [ [ { "node": "Refine Alignment", "type": "main", "index": 0 } ] ] },
+    "Refine Alignment": { "main": [ [ { "node": "Pass Context", "type": "main", "index": 0 } ] ] },
+    "Pass Context": { "main": [ [ { "node": "Retry Alignment", "type": "main", "index": 0 } ] ] },
+    "Retry Alignment": { "main": [ [ { "node": "Attach Context", "type": "main", "index": 0 } ] ] },
+    "Attach Context": { "main": [ [ { "node": "Exit Code Router", "type": "main", "index": 0 } ] ] },
+    "Exit Code Router": { "main": [
+      [ { "node": "Retry Done", "type": "main", "index": 0 } ],
+      [ { "node": "Pass Context", "type": "main", "index": 0 } ],
+      [ { "node": "Retry Cap Reached (still flagged)", "type": "main", "index": 0 } ],
+      [ { "node": "Unexpected Exit Code", "type": "main", "index": 0 } ]
+    ] },
+    "Retry Done": { "main": [ [ { "node": "Chapter Complete", "type": "main", "index": 0 } ] ] },
+    "Retry Cap Reached (still flagged)": { "main": [ [ { "node": "Chapter Complete", "type": "main", "index": 0 } ] ] }
+  },
+  "pinData": {},
+  "meta": { "instanceId": "text-align-refine-retry-chapter" }
+}

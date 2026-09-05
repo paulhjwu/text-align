@@ -1,0 +1,366 @@
+{
+  "name": "n8n-refine-alignment-orchestrator",
+  "nodes": [
+    {
+      "id": "o1",
+      "name": "Sticky Note — Setup",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-320, -420],
+      "parameters": {
+        "width": 620,
+        "height": 340,
+        "content": "### Before running anything here\n- Requires **self-hosted n8n** — Execute Command is disabled on n8n Cloud.\n- The host running n8n needs Poetry + `poetry install` already done once (torch/sentence-transformers resolved). Sanity check on that host directly: `poetry run refine-alignment --help`.\n- `workDir` must be the real repo root so `cd {{workDir}} && poetry run ...` picks up `.env` via `load_dotenv()`. If n8n runs in Docker, bind-mount the repo in and set `workDir` to the in-container path.\n- API keys: either that root `.env`, or OS-level env vars on the n8n process itself (systemd/docker-compose). n8n's own Credentials store is NOT passed to Execute Command subprocesses.\n- Raise n8n's `EXECUTIONS_TIMEOUT` before running more than a couple of chapters — async batch-mode passes can take minutes to ~1 hour each.\n- No overlap protection: don't trigger two runs against the same config+corpus+overlapping chapters concurrently.\n- **After importing**, every \"Run Chapter (...)\" Execute Workflow node here points at a placeholder — open each one and repoint it at your imported copy of `n8n-refine-retry-chapter.json`."
+      }
+    },
+    {
+      "id": "o2",
+      "name": "Run: One Chapter Or Range",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [-320, 0],
+      "parameters": {}
+    },
+    {
+      "id": "o3",
+      "name": "Configure Run",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [-60, 0],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            { "id": "1", "name": "workDir", "value": "/home/paulhjwu/text-align", "type": "string" },
+            { "id": "2", "name": "config", "value": "BSB", "type": "string" },
+            { "id": "3", "name": "corpus", "value": "nt", "type": "string" },
+            { "id": "4", "name": "batchMode", "value": "sync", "type": "string" },
+            { "id": "5", "name": "maxRetryPasses", "value": 5, "type": "number" },
+            { "id": "6", "name": "fallbackThresholdFlag", "value": "", "type": "string" },
+            { "id": "7", "name": "scopeType", "value": "chapter", "type": "string" },
+            { "id": "8", "name": "chapter", "value": "40004", "type": "string" },
+            { "id": "9", "name": "chapterStart", "value": "", "type": "string" },
+            { "id": "10", "name": "chapterEnd", "value": "", "type": "string" },
+            { "id": "11", "name": "book", "value": "", "type": "string" },
+            { "id": "12", "name": "bookStart", "value": "", "type": "string" },
+            { "id": "13", "name": "bookEnd", "value": "", "type": "string" }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "o4",
+      "name": "Build Chapter Args",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [200, 0],
+      "parameters": {
+        "jsCode": "// scopeType is one of: chapter | chapter-range | book | book-range\n// (mirrors refine-alignment's own mutually-exclusive scope flags).\nconst s = $json;\nlet chapterArgs = '';\nif (s.scopeType === 'chapter')       chapterArgs = `--chapter ${s.chapter}`;\nif (s.scopeType === 'chapter-range') chapterArgs = `--chapter-range ${s.chapterStart} ${s.chapterEnd}`;\nif (s.scopeType === 'book')          chapterArgs = `--book ${s.book}`;\nif (s.scopeType === 'book-range')    chapterArgs = `--book-range ${s.bookStart} ${s.bookEnd}`;\nreturn [{\n  json: {\n    workDir: s.workDir,\n    config: s.config,\n    corpus: s.corpus,\n    batchMode: s.batchMode,\n    maxRetryPasses: s.maxRetryPasses,\n    fallbackThresholdFlag: s.fallbackThresholdFlag,\n    chapterArgs\n  }\n}];"
+      }
+    },
+    {
+      "id": "o5",
+      "name": "Run Chapter (Refine + Retry)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [460, 0],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": "n8n-refine-retry-chapter"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "workDir": "={{$json.workDir}}",
+            "config": "={{$json.config}}",
+            "corpus": "={{$json.corpus}}",
+            "chapterArgs": "={{$json.chapterArgs}}",
+            "batchMode": "={{$json.batchMode}}",
+            "fallbackThresholdFlag": "={{$json.fallbackThresholdFlag}}",
+            "maxRetryPasses": "={{$json.maxRetryPasses}}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "o6",
+      "name": "Run: Chapter List",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [-320, 340],
+      "parameters": {}
+    },
+    {
+      "id": "o7",
+      "name": "Configure Batch Run",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [-60, 340],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            { "id": "1", "name": "workDir", "value": "/home/paulhjwu/text-align", "type": "string" },
+            { "id": "2", "name": "config", "value": "BSB", "type": "string" },
+            { "id": "3", "name": "corpus", "value": "nt", "type": "string" },
+            { "id": "4", "name": "otSection", "value": "", "type": "string" },
+            { "id": "5", "name": "batchMode", "value": "sync", "type": "string" },
+            { "id": "6", "name": "maxRetryPasses", "value": 5, "type": "number" },
+            { "id": "7", "name": "fallbackThresholdFlag", "value": "", "type": "string" }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "o8",
+      "name": "List Chapters",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [200, 340],
+      "parameters": {
+        "command": "=cd {{$json.workDir}} && poetry run python scripts/{{$json.corpus === 'ot' ? 'ot' : 'nt'}}_chapters.py --json{{$json.corpus === 'ot' ? ' --section ' + $json.otSection : ''}}"
+      }
+    },
+    {
+      "id": "o9",
+      "name": "Parse Chapter List",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 340],
+      "parameters": {
+        "jsCode": "// nt_chapters.py / ot_chapters.py --json both emit a flat array of\n// {id, start, end, label} (verified against scripts/*_chapters.py source).\n// start/end are chapter ids (BBCCC); equal for an unbundled single chapter.\nconst entries = JSON.parse($json.stdout);\nconst ctx = $('Configure Batch Run').item.json;\nreturn entries.map(e => ({\n  json: {\n    workDir: ctx.workDir,\n    config: ctx.config,\n    corpus: ctx.corpus,\n    batchMode: ctx.batchMode,\n    maxRetryPasses: ctx.maxRetryPasses,\n    fallbackThresholdFlag: ctx.fallbackThresholdFlag,\n    chapterArgs: `--chapter-range ${e.start} ${e.end}`,\n    label: e.label\n  }\n}));"
+      }
+    },
+    {
+      "id": "o10",
+      "name": "Loop Over Chapters",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [720, 340],
+      "parameters": { "batchSize": 1, "options": {} }
+    },
+    {
+      "id": "o11",
+      "name": "Run Chapter (Batch)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [980, 420],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": "n8n-refine-retry-chapter"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "workDir": "={{$json.workDir}}",
+            "config": "={{$json.config}}",
+            "corpus": "={{$json.corpus}}",
+            "chapterArgs": "={{$json.chapterArgs}}",
+            "batchMode": "={{$json.batchMode}}",
+            "fallbackThresholdFlag": "={{$json.fallbackThresholdFlag}}",
+            "maxRetryPasses": "={{$json.maxRetryPasses}}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "o12",
+      "name": "Finalize Batch",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [980, 260],
+      "parameters": {
+        "jsCode": "// Loop Over Chapters' \"done\" output re-emits every item that was looped —\n// collapse to a single execution of the summary command.\nreturn [{ json: $('Configure Batch Run').item.json }];"
+      }
+    },
+    {
+      "id": "o13",
+      "name": "Run Summary",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [1240, 260],
+      "parameters": {
+        "command": "=cd {{$json.workDir}} && poetry run python scripts/alignment_summary.py --config {{$json.config}} --corpus {{$json.corpus}}"
+      }
+    },
+    {
+      "id": "o14",
+      "name": "Sticky Note — Sequential Only",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [720, 560],
+      "parameters": {
+        "width": 560,
+        "height": 200,
+        "content": "### Sequential, not parallel\nLoop Over Chapters runs one chapter at a time — n8n has nothing like GHA's 256-way matrix here. Use this branch for a handful of chapters, one book, or re-running specific flagged chapters. For a full NT/OT production run, keep using:\n\n`gh workflow run align-nt.yml -f config=BSB`\n\n(or the OT equivalent, per section)."
+      }
+    },
+    {
+      "id": "o15",
+      "name": "Run: Clean",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [-320, 760],
+      "parameters": {}
+    },
+    {
+      "id": "o16",
+      "name": "Configure Clean",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [-60, 760],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            { "id": "1", "name": "workDir", "value": "/home/paulhjwu/text-align", "type": "string" },
+            { "id": "2", "name": "config", "value": "BSB", "type": "string" },
+            { "id": "3", "name": "corpus", "value": "nt", "type": "string" }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "o17",
+      "name": "Clean Alignments",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [200, 760],
+      "parameters": {
+        "command": "=cd {{$json.workDir}} && poetry run clean-alignments --config {{$json.config}} --corpus {{$json.corpus}}"
+      }
+    },
+    {
+      "id": "o18",
+      "name": "Run: Score",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [-320, 920],
+      "parameters": {}
+    },
+    {
+      "id": "o19",
+      "name": "Configure Score",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [-60, 920],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            { "id": "1", "name": "workDir", "value": "/home/paulhjwu/text-align", "type": "string" },
+            { "id": "2", "name": "config", "value": "BSB", "type": "string" },
+            { "id": "3", "name": "corpus", "value": "nt", "type": "string" },
+            { "id": "4", "name": "scoresOutputPath", "value": "output/scores.tsv", "type": "string" }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "o20",
+      "name": "Score Alignment",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [200, 920],
+      "parameters": {
+        "command": "=cd {{$json.workDir}} && poetry run score-alignment --config {{$json.config}} --corpus {{$json.corpus}} --flagged-only --output {{$json.scoresOutputPath}}"
+      }
+    },
+    {
+      "id": "o21",
+      "name": "Run: Render",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [-320, 1080],
+      "parameters": {}
+    },
+    {
+      "id": "o22",
+      "name": "Configure Render",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [-60, 1080],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            { "id": "1", "name": "workDir", "value": "/home/paulhjwu/text-align", "type": "string" },
+            { "id": "2", "name": "config", "value": "BSB", "type": "string" }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "o23",
+      "name": "Render Alignment",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [200, 1080],
+      "parameters": {
+        "command": "=cd {{$json.workDir}} && poetry run render-alignment --config {{$json.config}}"
+      }
+    },
+    {
+      "id": "o24",
+      "name": "Sticky Note — Side Stages",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-320, 660],
+      "parameters": {
+        "width": 620,
+        "height": 90,
+        "content": "### Independent side-stages\nClean / Score / Render have no exit-code contract and normally run over a whole edition after several chapters (or a full run) have accumulated — kept as separate triggers rather than wired into the chapter pipeline above."
+      }
+    }
+  ],
+  "connections": {
+    "Run: One Chapter Or Range": { "main": [ [ { "node": "Configure Run", "type": "main", "index": 0 } ] ] },
+    "Configure Run": { "main": [ [ { "node": "Build Chapter Args", "type": "main", "index": 0 } ] ] },
+    "Build Chapter Args": { "main": [ [ { "node": "Run Chapter (Refine + Retry)", "type": "main", "index": 0 } ] ] },
+
+    "Run: Chapter List": { "main": [ [ { "node": "Configure Batch Run", "type": "main", "index": 0 } ] ] },
+    "Configure Batch Run": { "main": [ [ { "node": "List Chapters", "type": "main", "index": 0 } ] ] },
+    "List Chapters": { "main": [ [ { "node": "Parse Chapter List", "type": "main", "index": 0 } ] ] },
+    "Parse Chapter List": { "main": [ [ { "node": "Loop Over Chapters", "type": "main", "index": 0 } ] ] },
+    "Loop Over Chapters": { "main": [
+      [ { "node": "Finalize Batch", "type": "main", "index": 0 } ],
+      [ { "node": "Run Chapter (Batch)", "type": "main", "index": 0 } ]
+    ] },
+    "Run Chapter (Batch)": { "main": [ [ { "node": "Loop Over Chapters", "type": "main", "index": 0 } ] ] },
+    "Finalize Batch": { "main": [ [ { "node": "Run Summary", "type": "main", "index": 0 } ] ] },
+
+    "Run: Clean": { "main": [ [ { "node": "Configure Clean", "type": "main", "index": 0 } ] ] },
+    "Configure Clean": { "main": [ [ { "node": "Clean Alignments", "type": "main", "index": 0 } ] ] },
+
+    "Run: Score": { "main": [ [ { "node": "Configure Score", "type": "main", "index": 0 } ] ] },
+    "Configure Score": { "main": [ [ { "node": "Score Alignment", "type": "main", "index": 0 } ] ] },
+
+    "Run: Render": { "main": [ [ { "node": "Configure Render", "type": "main", "index": 0 } ] ] },
+    "Configure Render": { "main": [ [ { "node": "Render Alignment", "type": "main", "index": 0 } ] ] }
+  },
+  "pinData": {},
+  "meta": { "instanceId": "text-align-refine-alignment-orchestrator" }
+}

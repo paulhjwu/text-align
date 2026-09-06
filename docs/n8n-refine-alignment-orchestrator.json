@@ -1,4 +1,5 @@
 {
+  "id": "ta-refine-orchestrator",
   "name": "n8n-refine-alignment-orchestrator",
   "nodes": [
     {
@@ -10,7 +11,7 @@
       "parameters": {
         "width": 620,
         "height": 340,
-        "content": "### Before running anything here\n- Requires **self-hosted n8n** — Execute Command is disabled on n8n Cloud.\n- The host running n8n needs Poetry + `poetry install` already done once (torch/sentence-transformers resolved). Sanity check on that host directly: `poetry run refine-alignment --help`.\n- `workDir` must be the real repo root so `cd {{workDir}} && poetry run ...` picks up `.env` via `load_dotenv()`. If n8n runs in Docker, bind-mount the repo in and set `workDir` to the in-container path.\n- API keys: either that root `.env`, or OS-level env vars on the n8n process itself (systemd/docker-compose). n8n's own Credentials store is NOT passed to Execute Command subprocesses.\n- Raise n8n's `EXECUTIONS_TIMEOUT` before running more than a couple of chapters — async batch-mode passes can take minutes to ~1 hour each.\n- No overlap protection: don't trigger two runs against the same config+corpus+overlapping chapters concurrently.\n- **After importing**, every \"Run Chapter (...)\" Execute Workflow node here points at a placeholder — open each one and repoint it at your imported copy of `n8n-refine-retry-chapter.json`."
+        "content": "### Before running anything here\n- Requires **self-hosted n8n** — Execute Command is disabled on n8n Cloud, and is also disabled by default on self-hosted n8n 2.x for security; start with `NODES_EXCLUDE='[]'` (see `docs/setup-n8n.md`).\n- The host running n8n needs Poetry + `poetry install` already done once (torch/sentence-transformers resolved). Sanity check on that host directly: `poetry run refine-alignment --help`.\n- `workDir` must be the real repo root so `cd {{workDir}} && poetry run ...` picks up `.env` via `load_dotenv()`. If n8n runs in Docker, bind-mount the repo in and set `workDir` to the in-container path.\n- API keys: either that root `.env`, or OS-level env vars on the n8n process itself (systemd/docker-compose). n8n's own Credentials store is NOT passed to Execute Command subprocesses.\n- Raise n8n's `EXECUTIONS_TIMEOUT` before running more than a couple of chapters — async batch-mode passes can take minutes to ~1 hour each.\n- No overlap protection: don't trigger two runs against the same config+corpus+overlapping chapters concurrently.\n- The \"Run Chapter (...)\" Execute Workflow nodes here reference `n8n-refine-retry-chapter.json` by its fixed `id` (`ta-refine-retry-chapter`), so no manual repointing is needed **as long as that file is imported with its `id` intact** — see `docs/setup-n8n.md` for the exact import steps and why the editor's drag-and-drop import can silently strip it."
       }
     },
     {
@@ -43,7 +44,9 @@
             { "id": "10", "name": "chapterEnd", "value": "", "type": "string" },
             { "id": "11", "name": "book", "value": "", "type": "string" },
             { "id": "12", "name": "bookStart", "value": "", "type": "string" },
-            { "id": "13", "name": "bookEnd", "value": "", "type": "string" }
+            { "id": "13", "name": "bookEnd", "value": "", "type": "string" },
+            { "id": "14", "name": "llmProviderOverride", "value": "google", "type": "string" },
+            { "id": "15", "name": "llmModelOverride", "value": "gemini-3.1-pro-preview", "type": "string" }
           ]
         },
         "options": {}
@@ -56,7 +59,7 @@
       "typeVersion": 2,
       "position": [200, 0],
       "parameters": {
-        "jsCode": "// scopeType is one of: chapter | chapter-range | book | book-range\n// (mirrors refine-alignment's own mutually-exclusive scope flags).\nconst s = $json;\nlet chapterArgs = '';\nif (s.scopeType === 'chapter')       chapterArgs = `--chapter ${s.chapter}`;\nif (s.scopeType === 'chapter-range') chapterArgs = `--chapter-range ${s.chapterStart} ${s.chapterEnd}`;\nif (s.scopeType === 'book')          chapterArgs = `--book ${s.book}`;\nif (s.scopeType === 'book-range')    chapterArgs = `--book-range ${s.bookStart} ${s.bookEnd}`;\nreturn [{\n  json: {\n    workDir: s.workDir,\n    config: s.config,\n    corpus: s.corpus,\n    batchMode: s.batchMode,\n    maxRetryPasses: s.maxRetryPasses,\n    fallbackThresholdFlag: s.fallbackThresholdFlag,\n    chapterArgs\n  }\n}];"
+        "jsCode": "// scopeType is one of: chapter | chapter-range | book | book-range\n// (mirrors refine-alignment's own mutually-exclusive scope flags).\nconst s = $json;\nlet chapterArgs = '';\nif (s.scopeType === 'chapter')       chapterArgs = `--chapter ${s.chapter}`;\nif (s.scopeType === 'chapter-range') chapterArgs = `--chapter-range ${s.chapterStart} ${s.chapterEnd}`;\nif (s.scopeType === 'book')          chapterArgs = `--book ${s.book}`;\nif (s.scopeType === 'book-range')    chapterArgs = `--book-range ${s.bookStart} ${s.bookEnd}`;\nreturn [{\n  json: {\n    workDir: s.workDir,\n    config: s.config,\n    corpus: s.corpus,\n    batchMode: s.batchMode,\n    maxRetryPasses: s.maxRetryPasses,\n    fallbackThresholdFlag: s.fallbackThresholdFlag,\n    // Optional: override refine-alignment's --llm-provider/--llm-model for just this\n    // run, without touching the config YAML's own llm_provider/llm_model. Leave both\n    // blank to use the config's real provider. Does not affect the retry pass.\n    llmProviderOverride: s.llmProviderOverride || '',\n    llmModelOverride: s.llmModelOverride || '',\n    chapterArgs\n  }\n}];"
       }
     },
     {
@@ -69,8 +72,8 @@
         "source": "database",
         "workflowId": {
           "__rl": true,
-          "value": "",
-          "mode": "list",
+          "value": "ta-refine-retry-chapter",
+          "mode": "id",
           "cachedResultName": "n8n-refine-retry-chapter"
         },
         "workflowInputs": {
@@ -82,7 +85,9 @@
             "chapterArgs": "={{$json.chapterArgs}}",
             "batchMode": "={{$json.batchMode}}",
             "fallbackThresholdFlag": "={{$json.fallbackThresholdFlag}}",
-            "maxRetryPasses": "={{$json.maxRetryPasses}}"
+            "maxRetryPasses": "={{$json.maxRetryPasses}}",
+            "llmProviderOverride": "={{$json.llmProviderOverride}}",
+            "llmModelOverride": "={{$json.llmModelOverride}}"
           },
           "matchingColumns": [],
           "schema": [],
@@ -160,8 +165,8 @@
         "source": "database",
         "workflowId": {
           "__rl": true,
-          "value": "",
-          "mode": "list",
+          "value": "ta-refine-retry-chapter",
+          "mode": "id",
           "cachedResultName": "n8n-refine-retry-chapter"
         },
         "workflowInputs": {

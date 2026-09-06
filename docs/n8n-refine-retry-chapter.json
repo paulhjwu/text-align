@@ -1,4 +1,5 @@
 {
+  "id": "ta-refine-retry-chapter",
   "name": "n8n-refine-retry-chapter",
   "nodes": [
     {
@@ -16,7 +17,9 @@
             { "name": "chapterArgs", "type": "string" },
             { "name": "batchMode", "type": "string" },
             { "name": "fallbackThresholdFlag", "type": "string" },
-            { "name": "maxRetryPasses", "type": "number" }
+            { "name": "maxRetryPasses", "type": "number" },
+            { "name": "llmProviderOverride", "type": "string" },
+            { "name": "llmModelOverride", "type": "string" }
           ]
         }
       }
@@ -28,7 +31,7 @@
       "typeVersion": 1,
       "position": [260, 0],
       "parameters": {
-        "command": "=cd {{$json.workDir}} && poetry run refine-alignment --config {{$json.config}} --corpus {{$json.corpus}} {{$json.chapterArgs}} --skip-existing --batch-mode {{$json.batchMode}}"
+        "command": "=cd {{$json.workDir}} && poetry run refine-alignment --config {{$json.config}} --corpus {{$json.corpus}} {{$json.chapterArgs}} --skip-existing --batch-mode {{$json.batchMode}}{{$json.llmProviderOverride ? ' --llm-provider ' + $json.llmProviderOverride : ''}}{{$json.llmModelOverride ? ' --llm-model ' + $json.llmModelOverride : ''}}"
       },
       "continueOnFail": false
     },
@@ -130,7 +133,7 @@
       "parameters": {
         "width": 560,
         "height": 220,
-        "content": "### Do/while retry loop\nThe \"loop\" branch of Exit Code Router connects back to **Pass Context**, not to n8n's Split-In-Batches/Loop-Over-Items node -- this is a condition-based do/while (retry while exit code == 2, capped at maxRetryPasses), built as a cycle on the canvas. Pass Context re-derives every static field from Execute Workflow Trigger on every visit (initial and loop-back) rather than trusting Execute Command's output to carry fields through, since Execute Command only emits {exitCode, stdout, stderr} for itself.\n\nretry-alignment exit codes (verified in retry_cli.py): 0 = done (nothing flagged, or the expensive retry model was used this pass); 2 = the cheap fallback model was used because the flagged rate crossed --fallback-threshold -- run again; anything else = a real failure."
+        "content": "### Do/while retry loop\nThe \"loop\" branch of Exit Code Router connects back to **Pass Context**, not to n8n's Split-In-Batches/Loop-Over-Items node -- this is a condition-based do/while (retry while exit code == 2, capped at maxRetryPasses), built as a cycle on the canvas. Pass Context re-derives every static field from Execute Workflow Trigger on every visit (initial and loop-back) rather than trusting Execute Command's output to carry fields through, since Execute Command only emits {exitCode, stdout, stderr} for itself.\n\nretry-alignment exit codes (verified in retry_cli.py): 0 = done (nothing flagged, or the expensive retry model was used this pass); 2 = the cheap fallback model was used because the flagged rate crossed --fallback-threshold -- run again; anything else = a real failure.\n\n### llmProviderOverride / llmModelOverride (optional)\nWhen non-empty, appends --llm-provider/--llm-model to the **refine-alignment** call only, overriding whatever the config YAML's own llm_provider/llm_model say for this one run. Leave both blank to use the config's real production provider. The retry pass is untouched -- it always uses the config's own retry_llm_provider/retry_llm_model."
       }
     }
   ],
